@@ -1,4 +1,4 @@
-// src/services/srv_jupiter.ts
+// src/service.ts
 import { Service, logger } from "@elizaos/core";
 var JupiterService = class _JupiterService extends Service {
   constructor(runtime) {
