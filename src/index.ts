@@ -1,6 +1,6 @@
 import type { Plugin, IAgentRuntime } from '@elizaos/core';
 
-import { JupiterService } from './services/srv_jupiter';
+import { JupiterService } from './service';
 
 export const jupiterPlugin: Plugin = {
   name: 'jupiter dex plugin',
