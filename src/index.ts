@@ -15,7 +15,7 @@ export const jupiterPlugin: Plugin = {
     new Promise<void>(async (resolve) => {
       resolve();
       const asking = 'jupiter';
-      const serviceType = 'solana';
+      const serviceType = 'chain_solana';
       let solanaService = runtime.getService(serviceType) as any;
       while (!solanaService) {
         console.log(asking, 'waiting for', serviceType, 'service...');
