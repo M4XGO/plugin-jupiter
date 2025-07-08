@@ -1,10 +1,8 @@
 import { Service, logger, type IAgentRuntime } from '@elizaos/core';
-import { Connection, Keypair, VersionedTransaction, PublicKey } from '@solana/web3.js';
+import { Connection } from '@solana/web3.js';
 
 export class JupiterService extends Service {
   private isRunning = false;
-  private connection: Connection | null = null;
-  private keypair: Keypair | null = null;
   private registry: Record<number, any> = {};
 
   static serviceType = 'JUPITER_SERVICE';
@@ -33,10 +31,39 @@ export class JupiterService extends Service {
     return id;
   }
 
+  async getQuoteWithRetry(url, retries = 3, delay = 2000) {
+    console.log('quote', url)
+    for (let i = 0; i < retries; i++) {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          // , response.headers has no rate limit headers
+          console.log('quote 429d')
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2; // exponential backoff
+          continue
+        }
+
+        const error = await response.text();
+        logger.warn('Quote request failed:', {
+          status: response.status,
+          error,
+        });
+        console.log('quoteResponse', response)
+        throw new Error(`Failed to get quote: ${error}`);
+      }
+
+      return await response.json();
+    }
+    throw new Error("Rate limit exceeded, try again later.");
+  }
+
+  // free tier is 1 req/s (60req/min)
   async getQuote({
     inputMint,
     outputMint,
-    amount,
+    amount, // atomic units of the token
     slippageBps,
   }: {
     inputMint: string;
@@ -45,20 +72,26 @@ export class JupiterService extends Service {
     slippageBps: number;
   }) {
     try {
-      const quoteResponse = await fetch(
-        `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&platformFeeBps=200`
-      );
+      const intAmount = parseInt(amount)
+      if (isNaN(intAmount) || intAmount <= 0) {
+        console.warn('jupiter::getQuote - Amount in', amount, 'become', intAmount)
+        return false
+      }
+      const quoteData = await this.getQuoteWithRetry(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
 
+      /*
       if (!quoteResponse.ok) {
         const error = await quoteResponse.text();
         logger.warn('Quote request failed:', {
           status: quoteResponse.status,
           error,
         });
+        console.log('quoteResponse', quoteResponse)
         throw new Error(`Failed to get quote: ${error}`);
       }
 
       const quoteData = await quoteResponse.json();
+      */
       return quoteData;
     } catch (error) {
       logger.error('Error getting Jupiter quote:', error);
@@ -66,6 +99,7 @@ export class JupiterService extends Service {
     }
   }
 
+  // drafts transactions for swap
   async executeSwap({
     quoteResponse,
     userPublicKey,
@@ -76,25 +110,39 @@ export class JupiterService extends Service {
     slippageBps: number;
   }) {
     try {
-      const swapResponse = await fetch('https://public.jupiterapi.com/swap', {
+      //console.log('executeSwap slippageBps', slippageBps)
+      const body = {
+        quoteResponse: {
+          ...quoteResponse,
+          slippageBps,
+        },
+        userPublicKey,
+        //slippageBps,
+        wrapAndUnwrapSol: true,
+        computeUnitPriceMicroLamports: 5_000_000,
+        dynamicComputeUnitLimit: true,
+      };
+      //console.log('executeSwap - body', body)
+      //console.log('userPublicKey', userPublicKey, 'body', body)
+      // what's wrong with this url?
+      //const swapResponse = await fetch('https://public.jupiterapi.com/swap', {
+      const swapResponse = await fetch('https://quote-api.jup.ag/v6/swap', {
+      // Route not found
+      //const swapResponse = await fetch('https://lite-api.jup.ag/v1/swap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quoteResponse: {
-            ...quoteResponse,
-            slippageBps,
-          },
-          userPublicKey,
-          wrapAndUnwrapSol: true,
-          computeUnitPriceMicroLamports: 5000000,
-          dynamicComputeUnitLimit: true,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!swapResponse.ok) {
+        if (swapResponse.status === 429) {
+          // , response.headers has no rate limit headers
+          console.log('swap 429d')
+        }
         const error = await swapResponse.text();
         throw new Error(`Failed to get swap transaction: ${error}`);
       }
+      //console.log('swapResponse response', swapResponse)
 
       return await swapResponse.json();
     } catch (error) {
@@ -103,6 +151,8 @@ export class JupiterService extends Service {
     }
   }
 
+  // belong in solana
+  /*
   async confirmTransaction(connection: Connection, signature: string): Promise<boolean> {
     for (let i = 0; i < this.CONFIRMATION_CONFIG.MAX_ATTEMPTS; i++) {
       try {
@@ -129,6 +179,7 @@ export class JupiterService extends Service {
     }
     return false;
   }
+  */
 
   // Get token price in USDC
   async getTokenPrice(
@@ -152,6 +203,7 @@ export class JupiterService extends Service {
   }
 
   // Get best swap route
+  /*
   async getBestRoute({
     inputMint,
     outputMint,
@@ -287,6 +339,7 @@ export class JupiterService extends Service {
       throw error;
     }
   }
+  */
 
   async getTokenPair({
     inputMint,
