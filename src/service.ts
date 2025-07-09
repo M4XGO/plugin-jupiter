@@ -32,7 +32,7 @@ export class JupiterService extends Service {
   }
 
   async getQuoteWithRetry(url, retries = 3, delay = 2000) {
-    console.log('quote', url)
+    //console.log('quote', url)
     for (let i = 0; i < retries; i++) {
       const response = await fetch(url);
 
@@ -47,10 +47,13 @@ export class JupiterService extends Service {
 
         const error = await response.text();
         logger.warn('Quote request failed:', {
+          url,
           status: response.status,
           error,
         });
-        console.log('quoteResponse', response)
+        // alot of 400s
+        // a lot of headers but nothing really useful
+        //console.log('quoteResponse', response)
         throw new Error(`Failed to get quote: ${error}`);
       }
 
