@@ -92,11 +92,42 @@ export class JupiterService extends Service {
 
       const quoteData = await quoteResponse.json();
       */
+      quoteData.totalLamportsNeeded = this.estimateLamportsNeeded(quoteData)
       return quoteData;
     } catch (error) {
       logger.error('Error getting Jupiter quote:', error);
       throw error;
     }
+  }
+
+  estimateLamportsNeeded(initialQuote) {
+    // Parse numbers safely
+    const platformFee = Number(initialQuote.platformFee?.amount || 0);
+
+    // Start with base requirements
+    let totalLamportsNeeded = platformFee;
+
+    const isWrappedSol = initialQuote.inputMint === "So11111111111111111111111111111111111111112";
+    if (isWrappedSol) {
+      if (initialQuote.inAmount) {
+        const inAmount = Number(initialQuote.inAmount)
+        if (!isNaN(inAmount)) {
+          totalLamportsNeeded += inAmount
+        }
+      }
+    }
+    // You might need one rent-exempt account if wrapping SOL (So111... token)
+    // Estimate for one rent-exempt temporary account (like wrapped SOL ATA)
+    // As per your error, it's ~2,039,280 lamports
+    const rentAccounts = isWrappedSol ? 2 : 1;
+    const rentLamports = 2_039_280 * rentAccounts;
+    totalLamportsNeeded += rentLamports
+
+    // Add buffer for transaction fees and safety
+    const buffer = 100_000; // 0.0001 SOL
+    totalLamportsNeeded += buffer;
+
+    return totalLamportsNeeded;
   }
 
   // drafts transactions for swap
