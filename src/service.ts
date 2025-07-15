@@ -1,6 +1,89 @@
 import { Service, logger, type IAgentRuntime } from '@elizaos/core';
 import { Connection } from '@solana/web3.js';
 
+const queues = { quotes: [] }
+
+async function getQuoteWithRetry(url, retries = 3, delay = 2000) {
+  //console.log('quote', url)
+  for (let i = 0; i < retries; i++) {
+    console.log('jupSrv - url', url)
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        // , response.headers has no rate limit headers
+        console.log('quote 429d')
+        await new Promise(r => setTimeout(r, delay));
+        delay *= 2; // exponential backoff
+        continue
+      }
+
+      const error = await response.text();
+      logger.warn('Quote request failed:', {
+        url,
+        status: response.status,
+        error,
+      });
+      // alot of 400s
+      // a lot of headers but nothing really useful
+      //console.log('quoteResponse', response)
+      throw new Error(`Failed to get quote: ${error}`);
+    }
+
+    return await response.json();
+  }
+  throw new Error("Rate limit exceeded, try again later.");
+}
+
+// doesn't matter how many agents since we're coming from a single IP
+// lets respect their service
+
+// could include runtime for logging
+function quoteEnqueue(url) {
+  let resolveHandle = false
+  let rejectHandle = false
+  const promise = new Promise((resolve, reject) => {
+    resolveHandle = resolve
+    rejectHandle = reject
+  })
+  queues.quotes.push({
+    url,
+    resolveHandle,
+    rejectHandle
+  })
+  return promise
+}
+
+async function processQueue(quote) {
+  try {
+    const quoteData = await getQuoteWithRetry(quote.url)
+    quote.resolveHandle(quoteData)
+  } catch(e) {
+    quote.rejectHandle(e)
+  }
+}
+
+async function checkQueues() {
+  // quote process
+  let delayInMs = 1_000
+  if (queues.quotes.length) {
+    console.log('jup:srv -', queues.quotes.length, 'items in quote queue')
+    const nextQuote = queues.quotes.shift() // FIFO
+    // process it
+    const start = Date.now()
+    await processQueue(nextQuote)
+    const took = Date.now() - start
+    // depending on how long this took, we can adjust the timer
+    delayInMs -= took
+    if (delayInMs < 0) delayInMs = 0
+    console.log('quote took', took.toLocaleString() + 'ms', 'delay now', delayInMs)
+  }
+  // free tier is 1 req/s (60req/min)
+  setTimeout(checkQueues, delayInMs)
+}
+// start checking queues
+checkQueues()
+
 export class JupiterService extends Service {
   private isRunning = false;
   private registry: Record<number, any> = {};
@@ -19,6 +102,7 @@ export class JupiterService extends Service {
   constructor(public runtime: IAgentRuntime) {
     super(runtime);
     this.registry = {};
+    this.routeCache = {};
     console.log('JUPITER_SERVICE cstr');
   }
 
@@ -29,37 +113,6 @@ export class JupiterService extends Service {
     console.log('registered', provider.name, 'as Jupiter provider #' + id);
     this.registry[id] = provider;
     return id;
-  }
-
-  async getQuoteWithRetry(url, retries = 3, delay = 2000) {
-    //console.log('quote', url)
-    for (let i = 0; i < retries; i++) {
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          // , response.headers has no rate limit headers
-          console.log('quote 429d')
-          await new Promise(r => setTimeout(r, delay));
-          delay *= 2; // exponential backoff
-          continue
-        }
-
-        const error = await response.text();
-        logger.warn('Quote request failed:', {
-          url,
-          status: response.status,
-          error,
-        });
-        // alot of 400s
-        // a lot of headers but nothing really useful
-        //console.log('quoteResponse', response)
-        throw new Error(`Failed to get quote: ${error}`);
-      }
-
-      return await response.json();
-    }
-    throw new Error("Rate limit exceeded, try again later.");
   }
 
   // free tier is 1 req/s (60req/min)
@@ -80,7 +133,14 @@ export class JupiterService extends Service {
         console.warn('jupiter::getQuote - Amount in', amount, 'become', intAmount)
         return false
       }
-      const quoteData = await this.getQuoteWithRetry(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
+
+      const key = inputMint + '_' + outputMint
+      if (this.routeCache[key]) {
+        console.log('we have a route for', key, this.routeCache[key].routePlan)
+      }
+
+      //const quoteData = await this.getQuoteWithRetry(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
+      const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
 
       /*
       if (!quoteResponse.ok) {
@@ -96,6 +156,7 @@ export class JupiterService extends Service {
       const quoteData = await quoteResponse.json();
       */
       quoteData.totalLamportsNeeded = this.estimateLamportsNeeded(quoteData)
+      this.routeCache[key] = quoteData
       return quoteData;
     } catch (error) {
       logger.error('Error getting Jupiter quote:', error);
@@ -562,4 +623,22 @@ export class JupiterService extends Service {
   isServiceRunning(): boolean {
     return this.isRunning;
   }
+}
+
+// hack these in here
+async function getCacheExp(runtime, key) {
+  const wrapper = runtime.getCache<WalletPortfolio>(key);
+  // if exp is in the past
+  if (wrapper.exp < Date.now()) {
+    // no data
+    return false
+  }
+  return wrapper.data
+}
+async function setCacheExp(runtime, key, val, ttlInSecs) {
+  const exp = Date.now() + ttlInSecs * 1_000
+  return runtime.setCache<WalletPortfolio>(key, {
+    exp,
+    data: val,
+  });
 }
