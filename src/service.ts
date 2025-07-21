@@ -140,6 +140,8 @@ export class JupiterService extends Service {
       }
 
       //const quoteData = await this.getQuoteWithRetry(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
+      // &onlyDirectRoutes=true
+      //   This ensures Jupiter only uses live and fully-initialized pools.
       const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
 
       /*
@@ -233,6 +235,7 @@ export class JupiterService extends Service {
         if (swapResponse.status === 429) {
           // , response.headers has no rate limit headers
           console.log('swap 429d')
+          // probably should retry in a bit
         }
         const error = await swapResponse.text();
         throw new Error(`Failed to get swap transaction: ${error}`);
@@ -627,7 +630,7 @@ export class JupiterService extends Service {
 
 // hack these in here
 async function getCacheExp(runtime, key) {
-  const wrapper = runtime.getCache<WalletPortfolio>(key);
+  const wrapper = await runtime.getCache<any>(key);
   // if exp is in the past
   if (wrapper.exp < Date.now()) {
     // no data
@@ -637,7 +640,7 @@ async function getCacheExp(runtime, key) {
 }
 async function setCacheExp(runtime, key, val, ttlInSecs) {
   const exp = Date.now() + ttlInSecs * 1_000
-  return runtime.setCache<WalletPortfolio>(key, {
+  return runtime.setCache<any>(key, {
     exp,
     data: val,
   });
