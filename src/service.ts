@@ -1,7 +1,9 @@
 import { Service, logger, type IAgentRuntime } from '@elizaos/core';
 import { Connection } from '@solana/web3.js';
 
-const queues = { quotes: [] }
+// doesn't matter how many agents since we're coming from a single IP
+// lets respect their service
+const queues = { quotes: [], swaps: [] }
 
 async function getQuoteWithRetry(url, retries = 3, delay = 2000) {
   //console.log('quote', url)
@@ -35,9 +37,6 @@ async function getQuoteWithRetry(url, retries = 3, delay = 2000) {
   throw new Error("Rate limit exceeded, try again later.");
 }
 
-// doesn't matter how many agents since we're coming from a single IP
-// lets respect their service
-
 // could include runtime for logging
 function quoteEnqueue(url) {
   let resolveHandle = false
@@ -54,7 +53,7 @@ function quoteEnqueue(url) {
   return promise
 }
 
-async function processQueue(quote) {
+async function processQuoteQueue(quote) {
   try {
     const quoteData = await getQuoteWithRetry(quote.url)
     quote.resolveHandle(quoteData)
@@ -63,7 +62,7 @@ async function processQueue(quote) {
   }
 }
 
-async function checkQueues() {
+async function checkQuoteQueues() {
   // quote process
   let delayInMs = 1_000
   if (queues.quotes.length) {
@@ -71,18 +70,98 @@ async function checkQueues() {
     const nextQuote = queues.quotes.shift() // FIFO
     // process it
     const start = Date.now()
-    await processQueue(nextQuote)
+    await processQuoteQueue(nextQuote)
     const took = Date.now() - start
     // depending on how long this took, we can adjust the timer
     delayInMs -= took
     if (delayInMs < 0) delayInMs = 0
     console.log('quote took', took.toLocaleString() + 'ms', 'delay now', delayInMs)
   }
+
   // free tier is 1 req/s (60req/min)
-  setTimeout(checkQueues, delayInMs)
+  setTimeout(checkQuoteQueues, delayInMs)
 }
 // start checking queues
-checkQueues()
+checkQuoteQueues()
+
+function swapEnqueue(url, payload) {
+  let resolveHandle = false
+  let rejectHandle = false
+  const promise = new Promise((resolve, reject) => {
+    resolveHandle = resolve
+    rejectHandle = reject
+  })
+  queues.swaps.push({
+    url,
+    payload,
+    resolveHandle,
+    rejectHandle
+  })
+  return promise
+}
+
+async function getSwapWithRetry(url, payload, retries = 3, delay = 2000) {
+  //console.log('swap', url)
+  for (let i = 0; i < retries; i++) {
+    console.log('jupSrv - swap', payload.body)
+    const response = await fetch(url, payload);
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        // , response.headers has no rate limit headers
+        console.log('swap 429d')
+        await new Promise(r => setTimeout(r, delay));
+        delay *= 2; // exponential backoff
+        continue
+      }
+
+      const error = await response.text();
+      logger.warn('Swap request failed:', {
+        url,
+        status: response.status,
+        error,
+      });
+      // alot of 400s
+      // a lot of headers but nothing really useful
+      //console.log('swapResponse', response)
+      throw new Error(`Failed to get swap: ${error}`);
+    }
+
+    return await response.json();
+  }
+  throw new Error("Rate limit exceeded, try again later.");
+}
+
+async function processSwapQueue(swap) {
+  try {
+    const swapData = await getSwapWithRetry(swap.url, swap.payload)
+    swap.resolveHandle(swapData)
+  } catch(e) {
+    swap.rejectHandle(e)
+  }
+}
+
+async function checkSwapQueues() {
+  // swap process
+  let delayInMs = 1_000
+  if (queues.swaps.length) {
+    console.log('jup:srv -', queues.swaps.length, 'items in swap queue')
+    const nextSwap = queues.swaps.shift() // FIFO
+    // process it
+    const start = Date.now()
+    await processSwapQueue(nextSwap)
+    const took = Date.now() - start
+    // depending on how long this took, we can adjust the timer
+    delayInMs -= took
+    if (delayInMs < 0) delayInMs = 0
+    console.log('swap took', took.toLocaleString() + 'ms', 'delay now', delayInMs)
+  }
+  // free tier is 1 req/s (60req/min)
+  setTimeout(checkSwapQueues, delayInMs)
+}
+// start checking queues
+checkSwapQueues()
+
 
 export class JupiterService extends Service {
   private isRunning = false;
@@ -136,13 +215,14 @@ export class JupiterService extends Service {
 
       const key = inputMint + '_' + outputMint
       if (this.routeCache[key]) {
-        console.log('we have a route for', key, this.routeCache[key].routePlan)
+        //console.log('we have a route for', key, this.routeCache[key].routePlan)
       }
 
       //const quoteData = await this.getQuoteWithRetry(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
       // &onlyDirectRoutes=true
       //   This ensures Jupiter only uses live and fully-initialized pools.
-      const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}&platformFeeBps=200`)
+      // &platformFeeBps=200
+      const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}`)
 
       /*
       if (!quoteResponse.ok) {
@@ -221,6 +301,15 @@ export class JupiterService extends Service {
       };
       //console.log('executeSwap - body', body)
       //console.log('userPublicKey', userPublicKey, 'body', body)
+
+
+      const swapData = await swapEnqueue('https://quote-api.jup.ag/v6/swap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      /*
       // what's wrong with this url?
       //const swapResponse = await fetch('https://public.jupiterapi.com/swap', {
       const swapResponse = await fetch('https://quote-api.jup.ag/v6/swap', {
@@ -243,6 +332,8 @@ export class JupiterService extends Service {
       //console.log('swapResponse response', swapResponse)
 
       return await swapResponse.json();
+      */
+      return swapData
     } catch (error) {
       logger.error('Error executing Jupiter swap:', error);
       throw error;
