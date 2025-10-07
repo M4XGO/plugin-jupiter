@@ -183,6 +183,7 @@ export class JupiterService extends Service {
     this.registry = {};
     this.routeCache = {};
     console.log('JUPITER_SERVICE cstr');
+    // detect api key and set it if available
   }
 
   // return Jupiter Provider handle
@@ -222,7 +223,9 @@ export class JupiterService extends Service {
       // &onlyDirectRoutes=true
       //   This ensures Jupiter only uses live and fully-initialized pools.
       // &platformFeeBps=200
-      const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}`)
+      //const quoteData = await quoteEnqueue(`https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}`)
+      const quoteData = await quoteEnqueue(`https://lite-api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${intAmount}&slippageBps=${slippageBps}`)
+      // if api-key then use https://api.jup.ag/swap/v1/quote
 
       /*
       if (!quoteResponse.ok) {
@@ -280,7 +283,7 @@ export class JupiterService extends Service {
   async executeSwap({
     quoteResponse,
     userPublicKey,
-    slippageBps,
+    slippageBps, // default to 200?
   }: {
     quoteResponse: { [key: string]: unknown };
     userPublicKey: string;
@@ -303,11 +306,19 @@ export class JupiterService extends Service {
       //console.log('userPublicKey', userPublicKey, 'body', body)
 
 
+      /*
       const swapData = await swapEnqueue('https://quote-api.jup.ag/v6/swap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+      */
+      const swapData = await swapEnqueue('https://lite-api.jup.ag/swap/v1/swap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
 
       /*
       // what's wrong with this url?
