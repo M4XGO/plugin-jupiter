@@ -1,39 +1,27 @@
-import type { Plugin, IAgentRuntime } from '@elizaos/core';
+import type { Plugin, IAgentRuntime, ServiceTypeName } from '@elizaos/core';
 
 import { JupiterService } from './service';
 
 export const jupiterPlugin: Plugin = {
-  name: 'jupiter dex plugin',
-  description: 'jupiter plugin',
-  actions: [],
-  evaluators: [],
-  providers: [],
+  name: 'jupiter',
+  description: 'jupiter dex swap plugin',
   services: [JupiterService],
   init: async (_, runtime: IAgentRuntime) => {
-    console.log('jupiter init');
 
-    new Promise<void>(async (resolve) => {
-      resolve();
-      const asking = 'jupiter';
-      const serviceType = 'chain_solana';
-      let solanaService = runtime.getService(serviceType) as any;
-      while (!solanaService) {
-        console.log(asking, 'waiting for', serviceType, 'service...');
-        solanaService = runtime.getService(serviceType) as any;
-        if (!solanaService) {
-          await new Promise((waitResolve) => setTimeout(waitResolve, 1000));
-        } else {
-          console.log(asking, 'Acquired', serviceType, 'service...');
-        }
-      }
-
+    // extensions
+    Promise.all(
+      ['chain_solana', 'jupiter'].map(
+        p => runtime.getServiceLoadPromise(p as ServiceTypeName)
+      )
+    ).then(() => {
+      const solanaService = runtime.getService('chain_solana') as any;
       const me = {
         name: 'Jupiter DEX services',
       };
       solanaService.registerExchange(me);
-
-      console.log('jupiter init done');
-    });
+    }).catch(e => {
+      console.error('jupiter::init - err', e)
+    })
   },
 };
 
