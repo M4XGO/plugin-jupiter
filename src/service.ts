@@ -182,7 +182,6 @@ export class JupiterService extends Service {
     super(runtime);
     this.registry = {};
     this.routeCache = {};
-    console.log('JUPITER_SERVICE cstr');
     // detect api key and set it if available
   }
 
@@ -190,7 +189,7 @@ export class JupiterService extends Service {
   async registerProvider(provider: any) {
     // add to registry
     const id = Object.values(this.registry).length + 1;
-    console.log('registered', provider.name, 'as Jupiter provider #' + id);
+    this.runtime.logger.success('registered', provider.name, 'as Jupiter provider #' + id);
     this.registry[id] = provider;
     return id;
   }
@@ -678,7 +677,6 @@ export class JupiterService extends Service {
   }
 
   static async start(runtime: IAgentRuntime) {
-    console.log('JUPITER_SERVICE trying to start');
     const service = new JupiterService(runtime);
     await service.start();
     return service;
@@ -697,7 +695,6 @@ export class JupiterService extends Service {
       logger.warn('Jupiter service is already running');
       return;
     }
-    console.log('JUPITER_SERVICE starting');
 
     try {
       logger.info('Starting Jupiter service...');
